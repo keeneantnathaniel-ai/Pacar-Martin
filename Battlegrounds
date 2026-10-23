@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>LAST DROP — Mini Battlegrounds</title>
+<style>
+  *{box-sizing:border-box} html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#101820;color:#eef5f4;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;touch-action:none}
+  canvas{display:block;width:100vw;height:100dvh;background:#263b32}
+  .hud{position:fixed;inset:0;pointer-events:none;padding:12px;display:flex;flex-direction:column;justify-content:space-between;text-shadow:0 2px 4px #000}
+  .top{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}.panel{background:#101820cc;border:1px solid #ffffff2b;border-radius:12px;padding:8px 11px;font-size:13px;backdrop-filter:blur(5px)}.panel b{color:#a7f3c6}
+  .health{width:150px;height:8px;background:#ffffff30;border-radius:9px;overflow:hidden;margin-top:5px}.health span{display:block;height:100%;background:#67e8a5;width:100%}
+  .bottom{display:flex;justify-content:space-between;align-items:flex-end;gap:10px}.hint{max-width:45%;font-size:11px;color:#e4eee8;background:#101820aa;padding:7px 9px;border-radius:9px}
+  .controls{position:fixed;inset:0;pointer-events:none}.stick{position:absolute;left:20px;bottom:28px;width:116px;height:116px;border-radius:50%;background:#d9fff01a;border:2px solid #e8fff055;pointer-events:auto;touch-action:none}
+  .nub{position:absolute;left:34px;top:34px;width:44px;height:44px;border-radius:50%;background:#d9fff066;border:2px solid #fff9;transform:translate(0,0)}
+  .actions{position:absolute;right:18px;bottom:26px;display:flex;flex-direction:column;gap:10px;align-items:center;pointer-events:auto}
+  .actionrow{display:flex;gap:10px;align-items:center}.btn{border:1px solid #ffffff66;background:#14231edb;color:white;border-radius:50%;width:64px;height:64px;font-weight:800;font-size:12px;touch-action:none;box-shadow:0 4px 14px #0005}.btn.fire{width:76px;height:76px;background:#d65c43e8}.btn:active{transform:scale(.96);filter:brightness(1.2)}
+  .overlay{position:fixed;inset:0;background:#08110ee8;display:flex;align-items:center;justify-content:center;padding:22px;text-align:center;z-index:5}.card{max-width:440px;width:100%;background:#1a2b25;border:1px solid #ffffff2a;border-radius:22px;padding:26px;box-shadow:0 20px 70px #0008}.card h1{margin:0 0 6px;letter-spacing:3px;font-size:clamp(28px,8vw,44px)}.card p{color:#c7d8cf;line-height:1.5}.start{border:0;border-radius:12px;background:#8ff0b5;color:#102219;font-weight:900;padding:14px 24px;font-size:16px;width:100%;margin-top:10px}.small{font-size:12px;color:#a9bcb2!important}
+  @media(min-width:800px){.stick{width:130px;height:130px;left:28px;bottom:28px}.actions{right:28px;bottom:28px}.hint{font-size:13px}}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div class="hud">
+  <div class="top">
+    <div class="panel"><b>LAST DROP</b><br><span id="status">SIAP TERJUN</span><div class="health"><span id="hpbar"></span></div><small id="hptext">HP 100</small></div>
+    <div class="panel" style="text-align:right">● <b id="alive">12</b> tersisa<br>Eliminasi: <b id="kills">0</b><br><span id="zone">Zona: aman</span></div>
+    <div class="panel" style="text-align:right">AMMO<br><b style="font-size:21px" id="ammo">30 / 90</b><br><small id="weapon">RIFLE</small></div>
+  </div>
+  <div class="bottom"><div class="hint">Gerak: stik kiri / WASD<br>Arahkan & tembak: sentuh layar / mouse<br>R untuk reload • Hindari zona merah</div><div class="hint" id="message">Bertahan sampai jadi yang terakhir!</div></div>
+</div>
+<div class="controls" id="controls">
+  <div class="stick" id="stick"><div class="nub" id="nub"></div></div>
+  <div class="actions">
+    <div class="actionrow"><button class="btn" id="reload">RELOAD<br>↻</button><button class="btn" id="heal">MEDKIT<br>+</button></div>
+    <button class="btn fire" id="fire">TEMBAK<br>●</button>
+  </div>
+</div>
+<div class="overlay" id="overlay"><div class="card"><h1>LAST DROP</h1><p>Mini game battlegrounds top-down. Bertahan, kumpulkan eliminasi, dan tetap berada di dalam zona aman!</p><p>Loot medkit otomatis tersedia. Musuh akan memburu dan menembak balik.</p><button class="start" id="start">MULAI PERTEMPURAN</button><p class="small">Dibuat sebagai game HTML satu file • Bisa dimainkan di HP dan komputer</p></div></div>
+<script>
+(()=>{
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+const $=id=>document.getElementById(id);
+let W=0,H=0,dpr=1,world={w:1800,h:1800},player,enemies=[],bullets=[],obstacles=[],loot=[],keys={},running=false,ended=false,kills=0,ammo=30,reserve=90,reloading=false,lastShot=0,lastEnemyShot=0,zoneRadius=820,zoneTimer=0,elapsed=0,healCount=2,aim={x:0,y:0},move={x:0,y:0},camera={x:0,y:0},last=0,fireHeld=false,joyId=null,joyCenter=null;
+function resize(){dpr=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;canvas.width=W*dpr;canvas.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0)}
+addEventListener('resize',resize);resize();
+const rand=(a,b)=>a+Math.random()*(b-a),dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y),clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+function reset(){
+ player={x:world.w/2,y:world.h/2,r:15,hp:100,speed:220,angle:0,inv:0};
+ enemies=[];bullets=[];obstacles=[];loot=[];kills=0;ammo=30;reserve=90;reloading=false;zoneRadius=820;zoneTimer=0;elapsed=0;healCount=2;ended=false;
+ for(let i=0;i<38;i++){let x=rand(70,world.w-70),y=rand(70,world.h-70);if(Math.hypot(x-player.x,y-player.y)<170){i--;continue}obstacles.push({x,y,w:rand(38,95),h:rand(38,90),type:Math.random()<.55?'tree':'rock'})}
+ for(let i=0;i<11;i++){let x,y;do{x=rand(80,world.w-80);y=rand(80,world.h-80)}while(Math.hypot(x-player.x,y-player.y)<280);enemies.push({x,y,r:14,hp:65,speed:rand(65,95),angle:0,cool:rand(.5,2),wander:rand(0,6),alive:true})}
+ for(let i=0;i<13;i++)loot.push({x:rand(90,world.w-90),y:rand(90,world.h-90),type:Math.random()<.6?'ammo':'med',taken:false});
+ camera.x=player.x-W/2;camera.y=player.y-H/2;updateHud();
+}
+function updateHud(){
+ $('alive').textContent=(player&&player.hp>0?1:0)+enemies.filter(e=>e.alive).length;
+ $('kills').textContent=kills;$('ammo').textContent=(reloading?'...':ammo)+' / '+reserve;
+ $('hptext').textContent='HP '+Math.max(0,Math.ceil(player?.hp||0));$('hpbar').style.width=clamp(player?.hp||0,0,100)+'%';
+ $('status').textContent=ended?(player.hp>0?'MENANG!':'TERELIMINASI'):'BERTEMPUR';$('zone').textContent='Zona: '+Math.max(0,Math.ceil(zoneTimer))+'s';
+}
+function start(){reset();running=true;$('overlay').style.display='none';last=performance.now();requestAnimationFrame(loop)}
+function finish(win){if(ended)return;ended=true;running=false;$('overlay').style.display='flex';$('overlay').innerHTML=`<div class="card"><h1>${win?'WINNER!':'GAME OVER'}</h1><p>${win?'Kamu menjadi yang terakhir bertahan!':'Kamu tereliminasi. Coba strategi lain!'}</p><p>Eliminasi: <b>${kills}</b></p><button class="start" id="again">MAIN LAGI</button></div>`;$('again').onclick=start}
+function circle(x,y,r,color,stroke){ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=2;ctx.stroke()}}
+function shoot(from,angle,enemy=false){let speed=enemy?430:680;bullets.push({x:from.x+Math.cos(angle)*(from.r+5),y:from.y+Math.sin(angle)*(from.r+5),vx:Math.cos(angle)*speed,vy:Math.sin(angle)*speed,life:1.25,damage:enemy?9:34,enemy})}
+function reload(){if(reloading||ammo===30||reserve<=0||!running)return;reloading=true;setTimeout(()=>{if(!player)return;let n=Math.min(30-ammo,reserve);ammo+=n;reserve-=n;reloading=false;updateHud()},850)}
+function heal(){if(!running||healCount<=0||player.hp>=100)return;healCount--;player.hp=Math.min(100,player.hp+38);$('heal').innerHTML='MEDKIT<br>'+healCount;updateHud()}
+function moveEntity(e,dx,dy,dt){
+ let nx=clamp(e.x+dx*dt,e.r,world.w-e.r),ny=clamp(e.y+dy*dt,e.r,world.h-e.r);
+ for(const o of obstacles){let cx=clamp(nx,o.x-o.w/2,o.x+o.w/2),cy=clamp(ny,o.y-o.h/2,o.y+o.h/2);if(Math.hypot(nx-cx,ny-cy)<e.r+2){return}}
+ e.x=nx;e.y=ny;
+}
+function update(dt){
+ if(!running)return;elapsed+=dt;zoneTimer=Math.max(0,Math.ceil(22-elapsed));
+ if(elapsed>22)zoneRadius=Math.max(210,zoneRadius-dt*9);
+ let mx=move.x+(keys.a||keys.arrowleft?-1:0)+(keys.d||keys.arrowright?1:0),my=move.y+(keys.w||keys.arrowup?-1:0)+(keys.s||keys.arrowdown?1:0);let ml=Math.hypot(mx,my)||1;
+ moveEntity(player,mx/ml*player.speed,my/ml*player.speed,dt);
+ player.inv=Math.max(0,player.inv-dt);
+ // camera follows player
+ camera.x=clamp(player.x-W/2,0,world.w-W);camera.y=clamp(player.y-H/2,0,world.h-H);
+ if(aim.active){let ax=aim.x+camera.x,ay=aim.y+camera.y;player.angle=Math.atan2(ay-player.y,ax-player.x)}
+ if(fireHeld&&performance.now()-lastShot>175&&ammo>0&&!reloading){shoot(player,player.angle);ammo--;lastShot=performance.now();updateHud()}
+ if(ammo===0&&!reloading)reload();
+ // zone damage
+ if(Math.hypot(player.x-world.w/2,player.y-world.h/2)>zoneRadius){player.hp-=12*dt}
+ enemies.forEach(e=>{
+  if(!e.alive)return;e.cool-=dt;e.wander-=dt;
+  let d=dist(e,player),a=Math.atan2(player.y-e.y,player.x-e.x);e.angle=a;
+  let dx=0,dy=0;if(d>230){dx=Math.cos(a);dy=Math.sin(a)}else if(d<145){dx=-Math.cos(a)*.65;dy=-Math.sin(a)*.65}else if(e.wander<=0){e.wander=rand(1,3);dx=rand(-.6,.6);dy=rand(-.6,.6)}
+  moveEntity(e,dx*e.speed,dy*e.speed,dt);
+  if(d<460&&e.cool<=0){shoot(e,a,true);e.cool=rand(1.0,1.8)}
+  if(Math.hypot(e.x-world.w/2,e.y-world.h/2)>zoneRadius)e.hp-=8*dt;
+ });
+ bullets.forEach(b=>{b.x+=b.vx*dt;b.y+=b.vy*dt;b.life-=dt});
+ bullets=bullets.filter(b=>b.life>0&&b.x>0&&b.y>0&&b.x<world.w&&b.y<world.h);
+ for(const b of bullets){
+  for(const o of obstacles){if(Math.abs(b.x-o.x)<o.w/2&&Math.abs(b.y-o.y)<o.h/2){b.life=0;break}}
+  if(b.life<=0)continue;
+  if(b.enemy){if(Math.hypot(b.x-player.x,b.y-player.y)<player.r+4&&player.inv<=0){player.hp-=b.damage;player.inv=.12;b.life=0}}
+  else for(const e of enemies){if(e.alive&&Math.hypot(b.x-e.x,b.y-e.y)<e.r+4){e.hp-=b.damage;b.life=0;if(e.hp<=0){e.alive=false;kills++;if(Math.random()<.65)loot.push({x:e.x,y:e.y,type:'ammo',taken:false})}break}}
+ }
+ for(const l of loot){if(l.taken)continue;if(Math.hypot(l.x-player.x,l.y-player.y)<player.r+18){l.taken=true;if(l.type==='med'){healCount=Math.min(4,healCount+1);$('heal').innerHTML='MEDKIT<br>'+healCount}else{reserve=Math.min(180,reserve+24)}}}
+ enemies=enemies.filter(e=>e.alive);updateHud();
+ if(player.hp<=0){player.hp=0;updateHud();finish(false)}else if(enemies.length===0)finish(true);
+}
+function draw(){
+ ctx.clearRect(0,0,W,H);ctx.save();ctx.translate(-camera.x,-camera.y);
+ ctx.fillStyle='#304a3d';ctx.fillRect(0,0,world.w,world.h);
+ // terrain grid
+ ctx.strokeStyle='#ffffff08';ctx.lineWidth=1;for(let x=0;x<world.w;x+=80){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,world.h);ctx.stroke()}for(let y=0;y<world.h;y+=80){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(world.w,y);ctx.stroke()}
+ // zone tint
+ ctx.fillStyle='#b6323b35';ctx.fillRect(0,0,world.w,world.h);ctx.save();ctx.beginPath();ctx.arc(world.w/2,world.h/2,zoneRadius,0,Math.PI*2);ctx.clip();ctx.clearRect(0,0,world.w,world.h);ctx.fillStyle='#304a3d';ctx.fillRect(0,0,world.w,world.h);ctx.restore();
+ ctx.beginPath();ctx.arc(world.w/2,world.h/2,zoneRadius,0,Math.PI*2);ctx.strokeStyle='#71e7ee';ctx.lineWidth=5;ctx.stroke();
+ obstacles.forEach(o=>{if(o.type==='tree'){circle(o.x,o.y+7,Math.max(o.w,o.h)*.37,'#1d3028');circle(o.x,o.y,Math.max(o.w,o.h)*.36,'#376f4b','#214d35')}else{ctx.fillStyle='#66766b';ctx.beginPath();ctx.ellipse(o.x,o.y,o.w*.48,o.h*.4,-.3,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#8a9a8d';ctx.stroke()}});
+ loot.forEach(l=>{if(l.taken)return;ctx.fillStyle=l.type==='med'?'#ff7777':'#f4d66e';ctx.fillRect(l.x-8,l.y-8,16,16);ctx.fillStyle='#15251e';ctx.font='bold 12px sans-serif';ctx.textAlign='center';ctx.fillText(l.type==='med'?'+':'A',l.x,l.y+4)});
+ bullets.forEach(b=>circle(b.x,b.y,3,b.enemy?'#ff8a77':'#fff1a8'));
+ enemies.forEach(e=>{circle(e.x,e.y,e.r,'#d45d50','#672f2a');circle(e.x+Math.cos(e.angle)*5,e.y+Math.sin(e.angle)*5,4,'#ffe0b6');ctx.fillStyle='#111a';ctx.fillRect(e.x-16,e.y-24,32,4);ctx.fillStyle='#ff766a';ctx.fillRect(e.x-16,e.y-24,32*clamp(e.hp/65,0,1),4)});
+ // player
+ circle(player.x,player.y,player.r,player.inv>0?'#ffffff':'#8ef0b5','#153c2b');ctx.strokeStyle='#eafff3';ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(player.x,player.y);ctx.lineTo(player.x+Math.cos(player.angle)*25,player.y+Math.sin(player.angle)*25);ctx.stroke();
+ // safe zone minimap
+ ctx.restore();
+ const mw=110,mh=110,mx=W-mw-12,my=H/2-mh/2;ctx.fillStyle='#07100dbb';ctx.fillRect(mx,my,mw,mh);ctx.strokeStyle='#ffffff88';ctx.strokeRect(mx,my,mw,mh);
+ ctx.fillStyle='#71e7ee';ctx.beginPath();ctx.arc(mx+mw/2,my+mh/2,zoneRadius/world.w*mw,0,Math.PI*2);ctx.stroke();
+ ctx.fillStyle='#8ff0b5';ctx.fillRect(mx+player.x/world.w*mw-2,my+player.y/world.h*mh-2,5,5);
+ enemies.forEach(e=>{ctx.fillStyle='#ff6b5b';ctx.fillRect(mx+e.x/world.w*mw-1.5,my+e.y/world.h*mh-1.5,3,3)});
+}
+function loop(t){if(!running)return;let dt=Math.min((t-last)/1000,.04);last=t;update(dt);draw();requestAnimationFrame(loop)}
+// keyboard and mouse
+addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;if(e.key.toLowerCase()==='r')reload();if(e.key===' '){fireHeld=true;e.preventDefault()}});
+addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;if(e.key===' ')fireHeld=false});
+canvas.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'){aim={x:e.clientX,y:e.clientY,active:true};fireHeld=true;canvas.setPointerCapture(e.pointerId)}else{aim={x:e.clientX,y:e.clientY,active:true};}});
+canvas.addEventListener('pointermove',e=>{if(e.pointerType==='mouse'&&e.buttons){aim={x:e.clientX,y:e.clientY,active:true}}});
+addEventListener('pointerup',e=>{if(e.pointerType==='mouse')fireHeld=false});
+const stick=$('stick'),nub=$('nub');
+stick.addEventListener('pointerdown',e=>{joyId=e.pointerId;stick.setPointerCapture(joyId);let r=stick.getBoundingClientRect();joyCenter={x:r.left+r.width/2,y:r.top+r.height/2};joy(e)});
+stick.addEventListener('pointermove',e=>{if(e.pointerId===joyId)joy(e)});
+function joy(e){if(!joyCenter)return;let dx=e.clientX-joyCenter.x,dy=e.clientY-joyCenter.y,len=Math.hypot(dx,dy),max=38;if(len>max){dx=dx/len*max;dy=dy/len*max}nub.style.transform=`translate(${dx}px,${dy}px)`;move={x:dx/max,y:dy/max}}
+function endJoy(e){if(e.pointerId===joyId){joyId=null;joyCenter=null;move={x:0,y:0};nub.style.transform='translate(0,0)'}}
+stick.addEventListener('pointerup',endJoy);stick.addEventListener('pointercancel',endJoy);
+$('fire').addEventListener('pointerdown',e=>{fireHeld=true;$('fire').setPointerCapture(e.pointerId)});$('fire').addEventListener('pointerup',()=>fireHeld=false);$('fire').addEventListener('pointercancel',()=>fireHeld=false);
+$('reload').addEventListener('click',reload);$('heal').addEventListener('click',heal);$('start').addEventListener('click',start);
+})();
+</script>
+</body>
+</html>
